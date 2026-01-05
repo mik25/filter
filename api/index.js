@@ -142,6 +142,6 @@ app
 
     return res.send({ streams: stream_results });
   })
-  .listen(process.env.PORT || 3003, () => {
-    console.log("The server is working on " + process.env.PORT || 3003);
+  .listen(process.env.PORT || 80, () => {
+    console.log("The server is working on " + process.env.PORT || 80);
   });
