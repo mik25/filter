@@ -1,0 +1,16 @@
+[Unit]
+Description=Yourtor addon for Stremio
+After=network.target multi-user.target
+
+[Service]
+User=root
+WorkingDirectory=/home/daniwalter001/Projects/Perso/yourtor
+ExecStart=npm start
+Restart=always
+Environnement=NODE_ENV=production
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=myyourtor
+
+[Install]
+WantedBy=multi-user.target

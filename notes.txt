@@ -1,0 +1,67 @@
+// const host = "http://1.156.186.156:9117";
+// const apiKey = "lfc52616kbv1ziq9iyidtyzccjgjfvqf";
+
+//ygg
+// const host = "http://5.196.95.143:9117/jackett";
+// const apiKey = "vb9cal5ks6k23hebeodgs9v9f6gn413j";
+
+//ygg2
+// const host = "http://195.154.253.11:9117";
+// const apiKey = "slk4nam3ebkvr0cp6kemwtsdrd9jwk7x";
+
+//demonoid
+const host = "http://122.9.138.6:9117";
+const apiKey = "1nzknaz17g814h2vt9imounhf006sad1";
+
+//private=[torrentleech, blutopia, broadcasthenet, hdsky, iptorrents morethantv]
+// const host = "http://163.172.91.22:9117";
+// const apiKey = "dh0jpr5kffjz0vniizt3xo1gbu45eh6e";
+
+
+
+#xtor
+#http://82.64.107.217:9117|3uch97aczznwj1cjvyhqyoxkfbea6wn3
+#http://195.154.176.233:9117|wditbmg7gimijom3ayxdicceshdbl7ou
+
+abn
+http://37.187.96.240:9117/jackett|nn6a4ekizom285jrsgs5koivj7wlyx9s
+
+
+
+let loginYgg = () => {
+  fetch("https://www.ygg.re/auth/process_login", {
+    headers: {
+      accept: "*/*",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      "content-type":
+        "multipart/form-data; boundary=----WebKitFormBoundaryT9aX4ccFApzEaTlS",
+      pragma: "no-cache",
+      priority: "u=1, i",
+      "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Opera";v="112"',
+      "sec-ch-ua-arch": '"x86"',
+      "sec-ch-ua-bitness": '"64"',
+      "sec-ch-ua-full-version": '"112.0.5197.30"',
+      "sec-ch-ua-full-version-list":
+        '"Not/A)Brand";v="8.0.0.0", "Chromium";v="126.0.6478.183", "Opera";v="112.0.5197.30"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-model": '""',
+      "sec-ch-ua-platform": '"Linux"',
+      "sec-ch-ua-platform-version": '"6.9.3"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "x-requested-with": "XMLHttpRequest",
+      cookie: "account_created=true;",
+      Referer: "https://www.ygg.re/auth/login",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+    },
+    body: '------WebKitFormBoundaryT9aX4ccFApzEaTlS\r\nContent-Disposition: form-data; name="id"\r\n\r\nstuff2\r\n------WebKitFormBoundaryT9aX4ccFApzEaTlS\r\nContent-Disposition: form-data; name="pass"\r\n\r\n54321@\r\n------WebKitFormBoundaryT9aX4ccFApzEaTlS--\r\n',
+    method: "POST",
+  }).then(async (res) => {
+    console.log(res.status);
+    console.log(res.statusText);
+    console.log(res.headers);
+    console.log(res.headers.get("set-cookie"));
+  });
+};
