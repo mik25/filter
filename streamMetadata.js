@@ -120,27 +120,11 @@ function detectEnglishDub(title) {
     };
   }
   
-  // NEW: REMUX releases = full disc = all audio tracks including English
-  if (isREMUX) {
-    return {
-      isDubbed: true,
-      confidence: 'high',
-      reason: 'remux_preserves_all_audio'
-    };
-  }
-  
-  // NEW: Trusted group + BluRay = likely has all audio
-  if (isTrustedGroup && isHighQualityBluRay) {
-    return {
-      isDubbed: true,
-      confidence: 'high',
-      reason: 'trusted_group_bluray_multi_audio'
-    };
-  }
-  
-  // Check for generic multi-audio patterns
+  // Check for generic multi-audio patterns FIRST
   // ASSUME English unless it's a rare non-English pair
-  if (multiAudioPatterns.some(pattern => pattern.test(titleLower))) {
+  const hasMultiAudioKeywords = multiAudioPatterns.some(pattern => pattern.test(titleLower));
+  
+  if (hasMultiAudioKeywords) {
     if (hasNonEnglishPair) {
       // Rare case: two non-English languages
       return {
@@ -149,11 +133,18 @@ function detectEnglishDub(title) {
         reason: 'non_english_multi_audio'
       };
     }
+    
     // Common case: assume English is one of the tracks
+    // BOOST confidence if it's REMUX or from trusted group
+    const confidenceLevel = (isREMUX || isTrustedGroup) ? 'high' : 'medium';
+    const reason = (isREMUX || isTrustedGroup) 
+      ? 'multi_audio_remux_or_trusted_group'
+      : 'generic_multi_audio_assumes_english';
+    
     return {
       isDubbed: true,
-      confidence: 'medium',
-      reason: 'generic_multi_audio_assumes_english'
+      confidence: confidenceLevel,
+      reason: reason
     };
   }
   
