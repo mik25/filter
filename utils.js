@@ -7,8 +7,26 @@ const {
   timeSince,
 } = require("./helper");
 const config = require("./config");
-// At the top of utils.js, add the import:
 const streamMetadata = require('./streamMetadata');
+
+// ============================================================================
+// INDEXER CONFIGURATION - Easy enable/disable
+// ============================================================================
+const ENABLED_INDEXERS = {
+  nzbgeek: true,           // ✅ Core - Best overall coverage
+  drunkenslug: true,       // ✅ Core - Quality releases, multi-audio
+  finder: true,            // ✅ Core - Good for older/rare content
+  tosho: true,             // ✅ Specialist - Foreign cinema, varied sources
+  usenetcrawler: true,     // ⚠️  Often dupes NZBGeek (disable to speed up)
+  althub: false,           // ❌ Regional SA - disable unless needed
+  ninjacentral: false,     // ❌ Low unique content - disable to speed up
+  nzbsu: false,            // ❌ High dupe rate - disable to speed up
+  planet: false,           // ❌ High dupe rate - disable to speed up
+};
+
+// Note: With deduplication enabled, 4-5 indexers gives 95% coverage at 2x speed
+// Recommended: Keep first 5 enabled, disable rest unless you need regional content
+// ============================================================================
 
 let containEandS = (name = "", s, e, abs, abs_season, abs_episode) =>
   name?.includes(`s${s?.padStart(2, "0")}e${e?.padStart(2, "0")} `) ||
@@ -720,20 +738,26 @@ const fetchNZBPlanet = async (query, type = "series") => {
 
 const fetchAllNZB = async (query, type = "series") => {
   try {
-    const results = await Promise.all([
-      fetchNZBGeek(query, type),
-      fetchUsenetCrawler(query, type),
-      fetchNZBaltHUB(query, type),
-      fetchNZBFinder(query, type),
-      fetchNZBDrunkenSlug(query, type),
-      fetchNZBPlanet(query, type),
-      fetchNZBNinjaCentral(query, type),
-      fetchNZBSu(query, type),
-      fetchToshoNZB(query, type),
-    ]);
-
+    const indexers = [];
+    
+    // Only call enabled indexers
+    if (ENABLED_INDEXERS.nzbgeek) indexers.push(fetchNZBGeek(query, type));
+    if (ENABLED_INDEXERS.usenetcrawler) indexers.push(fetchUsenetCrawler(query, type));
+    if (ENABLED_INDEXERS.althub) indexers.push(fetchNZBaltHUB(query, type));
+    if (ENABLED_INDEXERS.finder) indexers.push(fetchNZBFinder(query, type));
+    if (ENABLED_INDEXERS.drunkenslug) indexers.push(fetchNZBDrunkenSlug(query, type));
+    if (ENABLED_INDEXERS.planet) indexers.push(fetchNZBPlanet(query, type));
+    if (ENABLED_INDEXERS.ninjacentral) indexers.push(fetchNZBNinjaCentral(query, type));
+    if (ENABLED_INDEXERS.nzbsu) indexers.push(fetchNZBSu(query, type));
+    if (ENABLED_INDEXERS.tosho) indexers.push(fetchToshoNZB(query, type));
+    
+    const enabledCount = Object.values(ENABLED_INDEXERS).filter(Boolean).length;
+    console.log(`Querying ${enabledCount} enabled indexers...`);
+    
+    const results = await Promise.all(indexers);
     return results.flat();
   } catch (error) {
+    console.error("fetchAllNZB error:", error);
     return [];
   }
 };
@@ -943,310 +967,4 @@ const sortStreams = (streams = []) => {
   
   streams.sort((a, b) => {
     // Extract quality from stream name (e.g., "🎬 NZB 1080p 3.52 GB [NinjaCentral]")
-    const getQualityValue = (stream) => {
-      const name = stream?.name || '';
-      if (name.includes('2160p')) return 2160;
-      if (name.includes('1080p')) return 1080;
-      if (name.includes('720p')) return 720;
-      if (name.includes('480p')) return 480;
-      return 0; // SD
-    };
-    
-    const aQuality = getQualityValue(a);
-    const bQuality = getQualityValue(b);
-    
-    // 1. QUALITY: Higher resolution first (1080p before 720p)
-    if (aQuality !== bQuality) {
-      return bQuality - aQuality; // Descending
-    }
-    
-    // Extract size in MB from stream name
-    const getSizeInMB = (stream) => {
-      const name = stream?.name || '';
-      
-      // Match "X.XX GB" or "XXX.XX MB" in stream name
-      const gbMatch = name.match(/([\d.]+)\s*GB/i);
-      if (gbMatch) {
-        return parseFloat(gbMatch[1]) * 1024;
-      }
-      
-      const mbMatch = name.match(/([\d.]+)\s*MB/i);
-      if (mbMatch) {
-        return parseFloat(mbMatch[1]);
-      }
-      
-      return 0;
-    };
-    
-    const aSize = getSizeInMB(a);
-    const bSize = getSizeInMB(b);
-    
-    // 2. SIZE: Larger files first (within same quality)
-    if (Math.abs(aSize - bSize) > 10) { // Ignore tiny differences
-      return bSize - aSize; // Descending
-    }
-    
-    // Extract age in days from title (from our metadata: "⏰ 2 years")
-    const getAgeDays = (stream) => {
-      const title = stream?.title || '';
-      const ageMatch = title.match(/⏰\s*(\d+)\s*(day|month|year)s?/i);
-      
-      if (!ageMatch) return 999999; // Unknown = treat as very old
-      
-      const value = parseInt(ageMatch[1]);
-      const unit = ageMatch[2].toLowerCase();
-      
-      if (unit.startsWith('day')) return value;
-      if (unit.startsWith('month')) return value * 30;
-      if (unit.startsWith('year')) return value * 365;
-      
-      return 999999;
-    };
-    
-    const aAge = getAgeDays(a);
-    const bAge = getAgeDays(b);
-    
-    // 3. AGE: Newer releases first (lower days = better)
-    if (Math.abs(aAge - bAge) > 30) { // More than 1 month difference
-      return aAge - bAge; // Ascending (lower = newer = better)
-    }
-    
-    // 4. BONUS: Prioritize multi-audio/dubbed content
-    const isDubbed = (stream) => {
-      const name = stream?.name || '';
-      return name.includes('🎙️') || name.includes('DUB');
-    };
-    
-    const aDubbed = isDubbed(a) ? 1 : 0;
-    const bDubbed = isDubbed(b) ? 1 : 0;
-    
-    if (aDubbed !== bDubbed) {
-      return bDubbed - aDubbed; // Dubbed first
-    }
-    
-    // 5. Final tiebreaker: HDR/REMUX quality indicators
-    const getSourceRank = (stream) => {
-      const title = stream?.title || '';
-      if (title.includes('💿 REMUX')) return 3;
-      if (title.includes('💿 BluRay')) return 2;
-      if (title.includes('🌐 WEB-DL')) return 1;
-      return 0;
-    };
-    
-    const aSource = getSourceRank(a);
-    const bSource = getSourceRank(b);
-    
-    return bSource - aSource; // Better source first
-  });
-  
-  // Log results to verify
-  console.log('\n📊 SORTED RESULTS (Top 10):');
-  streams.slice(0, 10).forEach((s, i) => {
-    const name = s?.name || '';
-    const quality = name.match(/\d{3,4}p|SD/)?.[0] || '?';
-    const size = name.match(/([\d.]+\s*[GM]B)/i)?.[0] || '?';
-    const age = s?.title?.match(/⏰\s*\d+\s*\w+/i)?.[0] || '?';
-    const lang = s?.title?.match(/(🎙️|🇰🇷|🇯🇵|🇩🇪|🇫🇷|🇺🇸|🎬)\s*[^|]+/i)?.[0]?.trim() || '?';
-    console.log(`${String(i + 1).padStart(2)}. ${quality.padEnd(6)} ${size.padEnd(10)} ${age.padEnd(12)} ${lang.substring(0, 25)}`);
-  });
-  console.log('=== END SORT ===\n');
-  
-  return streams;
-};
-
-const deduplicateNZBResults = (results) => {
-  if (!results || results.length === 0) return results;
-  
-  console.log(`\n=== Deduplicating ${results.length} NZB results ===`);
-  
-  const seen = new Map();
-  const deduplicated = [];
-  
-  for (const result of results) {
-    const title = result.Title || result.Desc || '';
-    const size = result.Size || 0;
-    const date = result.Date || new Date().toISOString();
-    
-    // Extract release group from title
-    const groupMatch = title.match(/-([A-Za-z0-9]+)$/i) || 
-                       title.match(/\[([A-Za-z0-9]+)\]/i) ||
-                       title.match(/\{([A-Za-z0-9]+)\}/i);
-    const releaseGroup = groupMatch ? groupMatch[1].toLowerCase() : 'unknown';
-    
-    // MUCH STRICTER: Round to nearest 10MB (not 100MB!)
-    // True duplicates should be byte-identical or within a few MB
-    const sizeMB = Math.round(size / (1024 * 1024) / 10) * 10;
-    
-    // Create unique key: group + size
-    const key = `${releaseGroup}-${sizeMB}`;
-    
-    if (!seen.has(key)) {
-      // First time seeing this release
-      seen.set(key, { result, date: new Date(date) });
-      deduplicated.push(result);
-      console.log(`✓ Keep: ${title.substring(0, 60)}... [${result.Tracker}] (${(size / (1024**3)).toFixed(2)} GB)`);
-    } else {
-      // Duplicate found - check if this one is newer
-      const existing = seen.get(key);
-      const existingAge = new Date(existing.date);
-      const currentAge = new Date(date);
-      
-      if (currentAge > existingAge) {
-        // This one is newer - replace the old one
-        const index = deduplicated.indexOf(existing.result);
-        if (index !== -1) {
-          deduplicated[index] = result;
-          seen.set(key, { result, date: currentAge });
-          console.log(`↻ Replace with newer: ${title.substring(0, 60)}... [${result.Tracker}]`);
-        }
-      } else {
-        // Keep existing (it's newer)
-        console.log(`✗ Skip duplicate: ${title.substring(0, 60)}... [${result.Tracker}]`);
-      }
-    }
-  }
-  
-  console.log(`\nDeduplication: ${results.length} → ${deduplicated.length} unique releases`);
-  console.log(`Removed ${results.length - deduplicated.length} duplicates\n`);
-  
-  return deduplicated;
-};
-
-const itemToStream = (el, total = 1) => {
-  const title = el?.Title || el?.Desc || "No title";
-  const tracker = el?.Tracker || "NZB";
-  const category = el?.Category || "Unknown";
-  
-  // Extract all metadata using helper
-  const metadata = streamMetadata.extractStreamMetadata(title);
-  
-  // Format size
-  const gb = 1024 * 1024 * 1024;
-  const mb = 1024 * 1024;
-  const size = el?.Size || 0;
-  const sizeStr = size > gb ? 
-    `${(size / gb).toFixed(2)} GB` : 
-    `${(size / mb).toFixed(2)} MB`;
-  
-  const timeStr = timeSince(el?.Date);
-  
-  // Build description lines (right side details)
-  const descriptionLines = [];
-  
-  descriptionLines.push(`📺 ${sliceLngText(title, 40)}`);
-  
-  // Quality line with HDR
-  if (metadata.hdr) {
-    descriptionLines.push(`${metadata.quality.emoji} ${metadata.quality.resolution} | ${metadata.hdr}`);
-  } else {
-    descriptionLines.push(`${metadata.quality.emoji} ${metadata.quality.resolution}`);
-  }
-  
-  // Source and codec
-  if (metadata.source && metadata.codec) {
-    descriptionLines.push(`${metadata.source} | ${metadata.codec}`);
-  } else if (metadata.source) {
-    descriptionLines.push(metadata.source);
-  } else if (metadata.codec) {
-    descriptionLines.push(metadata.codec);
-  }
-  
-  // Audio
-  if (metadata.audio) {
-    descriptionLines.push(metadata.audio);
-  }
-  
-  // Size and time
-  descriptionLines.push(`💾 ${sizeStr} | ⏰ ${timeStr}`);
-  
-  // Language line with optional release group
-  let languageLine = `${metadata.language.flag} ${metadata.language.name}`;
-  if (metadata.releaseGroup) {
-    languageLine += ` | ${metadata.releaseGroup}`;
-  }
-  descriptionLines.push(languageLine);
-  
-  // Category and tracker
-  descriptionLines.push(`🎥 ${category} | 📡 ${tracker}`);
-  
-  // Filename (truncated)
-  const shortTitle = title.length > 50 ? title.substring(0, 47) + '...' : title;
-  descriptionLines.push(`📄 ${shortTitle}`);
-  
-  // BUILD ENHANCED STREAM NAME (left side - compact with key info)
-  let streamName = `🎬 NZB ${metadata.quality.resolution}`;
-  
-  // Add HDR info if present (for 4K content especially)
-  if (metadata.hdr && metadata.quality.resolution === '2160p') {
-    // Shorten HDR labels for stream name
-    const shortHDR = metadata.hdr
-      .replace('🎨 Dolby Vision', 'Dolby Vision')
-      .replace('🌈 HDR10+', 'HDR10+')
-      .replace('🌟 HDR10', 'HDR10')
-      .replace('✨ HDR', 'HDR')
-      .replace('☀️ HLG', 'HLG')
-      .replace('🔟 10-bit', '10bit')
-      .replace('🎨 8-bit', '8bit');
-    streamName += ` ${shortHDR}`;
-  }
-  
-  // Add file size (important for quick scanning)
-  streamName += ` ${sizeStr}`;
-  
-  // Add dub indicator if present
-  if (metadata.dubInfo.isDubbed && (metadata.dubInfo.confidence === 'high' || metadata.dubInfo.confidence === 'medium')) {
-    streamName += ` 🎙️ DUB`;
-  }
-  
-  // Add tracker/indexer name in brackets
-  streamName += ` [${tracker}]`;
-  
-  return {
-    nzbUrl: el?.Link,
-    name: streamName,
-    title: descriptionLines.join('\n'),
-    fileMustInclude,
-    servers: SERVERS,
-    behaviorHints: {
-      filename: title,
-      notWebReady: true,
-      bingeGroup: `${config.id}|${metadata.quality.resolution}`,
-    },
-    options: {
-      proxyHeaders: {
-        request: { "User-Agent": "Stremio" },
-      },
-    },
-  };
-};
-
-module.exports = {
-  containEandS,
-  containE_S,
-  containsAbsoluteE,
-  containsAbsoluteE_,
-  getMeta,
-  getImdbFromKitsu,
-  isVideo,
-  getSize,
-  getQuality,
-  filterBasedOnQuality,
-  qualities,
-  bringFrenchVideoToTheTopOfList,
-  getFlagFromName,
-  getFittedFile,
-  fetchNZBGeek,
-  fetchNZBSu,
-  fetchAllNZB,
-  fetchNZBDrunkenSlug,
-  fetchNZBaltHUB,
-  fetchNZBNinjaCentral,
-  fetchNZBFinder,
-  fetchToshoNZB,
-  fetchUsenetCrawler,
-  fetchNZBPlanet,
-  deduplicateNZBResults,
-  isEnglish,
-  sortStreams,
-  itemToStream,
-};
+    const get
