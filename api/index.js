@@ -103,6 +103,17 @@ app
 
     console.log({ "Total results": result.length });
 
+    // ADDED: Deduplicate NZB results (with safety fallback)
+    try {
+      const deduplicated = UTILS.deduplicateNZBResults(result);
+      if (deduplicated && Array.isArray(deduplicated)) {
+        result = deduplicated;
+        console.log({ "After deduplication": result.length });
+      }
+    } catch (err) {
+      console.error("Deduplication failed:", err);
+    }
+
     result = filter(result, meta?.name || "", aliases);
 
     if (media !== "movie") {
