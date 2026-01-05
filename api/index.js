@@ -26,9 +26,6 @@ app
     res.setHeader("Access-Control-Allow-Headers", "*");
     res.setHeader("Content-Type", "application/json");
 
-    // console.log({ headers: req.headers });
-
-    //
     var json = { ...config };
 
     return res.send(json);
@@ -103,6 +100,17 @@ app
 
     console.log({ "Total results": result.length });
 
+    // Deduplicate NZB results (with safety fallback)
+    try {
+      const deduplicated = UTILS.deduplicateNZBResults(result);
+      if (deduplicated && Array.isArray(deduplicated)) {
+        result = deduplicated;
+        console.log({ "After deduplication": result.length });
+      }
+    } catch (err) {
+      console.error("Deduplication failed:", err);
+    }
+
     result = filter(result, meta?.name || "", aliases);
 
     if (media !== "movie") {
@@ -128,13 +136,12 @@ app
       .map((el) => UTILS.itemToStream(el, result.length))
       .filter((el) => el != null && el.nzbUrl != undefined);
 
-    stream_results = [
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities["4k"]),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.fhd),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.hd),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.sd),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.unknown),
-    ];
+    console.log({ "Before sort": stream_results.length });
+
+    // ✅ NEW: Sort streams by quality, size, age
+    stream_results = UTILS.sortStreams(stream_results);
+
+    console.log({ "After sort": stream_results.length });
 
     cache.set(cacheKey, stream_results);
 
