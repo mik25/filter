@@ -1,147 +1,119 @@
-require("dotenv").config({
-  path: "../.env",
-});
-const express = require("express");
-const app = express();
-const {
-  filter,
-  simplifiedName,
-  getAvatarName,
-  cleanKitsuName,
-  isLatinValid,
-} = require("../helper");
-const UTILS = require("../utils");
-const config = require("../config");
-const ptt = require("parse-torrent-title");
-const { handleSearch } = require("../handle-search");
-const cache = require("../storage/cache");
-
-// ----------------------------------------------
-app
-  .get("/", (req, res) => {
-    return res.status(200).send("okok");
-  })
-  .get("/manifest.json", (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
-    res.setHeader("Content-Type", "application/json");
-
-    // console.log({ headers: req.headers });
-
-    //
-    var json = { ...config };
-
-    return res.send(json);
-  })
-  .get("/stream/:type/:id", async (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
-    res.setHeader("Content-Type", "application/json");
-
-    console.log(req.params);
-
-    let media = req.params.type;
-    let id = req.params.id;
-    id = id.replace(".json", "");
-
-    const cacheKey = `${config.id}|${id}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      console.log(`Returning results from cache: ${cached.length} found`);
-      return res.send({ streams: cached });
+const sortStreams = (streams = []) => {
+  if (!streams || streams.length === 0) return streams;
+  
+  console.log(`Sorting ${streams.length} streams...`);
+  
+  streams.sort((a, b) => {
+    const aFilename = (a?.behaviorHints?.filename || '').toLowerCase();
+    const bFilename = (b?.behaviorHints?.filename || '').toLowerCase();
+    
+    // 1. QUALITY: Best quality first (2160p > 1080p > 720p > 480p > SD)
+    const getQualityRank = (filename) => {
+      if (filename.includes('2160p') || filename.includes('4k') || filename.includes('uhd')) return 1;
+      if (filename.includes('1080p') || filename.includes('fhd')) return 2;
+      if (filename.includes('720p') || filename.includes('hd')) return 3;
+      if (filename.includes('480p') || filename.includes('sd')) return 4;
+      return 5; // SD or unknown
+    };
+    
+    const aQualityRank = getQualityRank(aFilename);
+    const bQualityRank = getQualityRank(bFilename);
+    
+    // Primary sort: Quality (best first)
+    if (aQualityRank !== bQualityRank) {
+      return aQualityRank - bQualityRank;
     }
-
-    let tmp = [];
-
-    if (id.includes("kitsu")) {
-      tmp = await UTILS.getImdbFromKitsu(id);
-      if (!tmp) {
-        return res.send({ stream: {} });
+    
+    // 2. SIZE: Larger files first (within same quality)
+    const extractSizeMB = (stream) => {
+      // Try to get from title first
+      if (stream?.title) {
+        const sizeMatch = stream.title.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
+        if (sizeMatch) {
+          const value = parseFloat(sizeMatch[1]);
+          return sizeMatch[2].toUpperCase() === 'GB' ? value * 1024 : value;
+        }
       }
-    } else {
-      tmp = id.split(":");
+      
+      // Fallback: Extract from filename or use 0
+      const filename = stream?.behaviorHints?.filename || '';
+      const sizeMatch = filename.match(/(\d+(\.\d+)?)\s*(GB|MB|GiB|MiB)/i);
+      if (sizeMatch) {
+        const value = parseFloat(sizeMatch[1]);
+        const unit = sizeMatch[3].toUpperCase();
+        return unit.startsWith('G') ? value * 1024 : value;
+      }
+      
+      return 0;
+    };
+    
+    const aSize = extractSizeMB(a);
+    const bSize = extractSizeMB(b);
+    
+    // Secondary sort: Size (larger first)
+    if (aSize !== bSize) {
+      return bSize - aSize; // Descending order
     }
-
-    let [tt, s, e, abs_season, abs_episode, abs, aliases] = tmp;
-
-    console.log(tmp);
-
-    let meta = await UTILS.getMeta(tt, media);
-
-    console.log({ meta: id });
-    console.log({ name: meta?.name, year: meta?.year });
-
-    aliases = (aliases || []).map((e) => cleanKitsuName(e));
-    aliases = aliases.filter((e) => isLatinValid(e) && e != meta.name);
-
-    console.log({ aliases });
-
-    let altName = aliases && aliases.length > 0 ? aliases[0] : null;
-    altName = getAvatarName(meta?.name) == altName ? meta.name : altName;
-
-    let query = "";
-    query = meta?.name ?? "";
-
-    let result = [];
-
-    if (media === "movie") {
-      result = await UTILS.fetchAllNZB(
-        simplifiedName(query) + " " + meta?.year,
-        "movie"
-      );
-    } else if (media === "series" || media === "anime") {
-      result = await handleSearch(
-        UTILS.fetchAllNZB,
-        query,
-        s,
-        e,
-        abs_season,
-        abs_episode,
-        abs
-      );
+    
+    // 3. AGE PENALTY: Penalize releases older than 1 year
+    const getAgePenalty = (stream) => {
+      // Extract age from title (format: "⏰ X days/months/years")
+      const ageMatch = stream?.title?.match(/⏰\s*(\d+)\s*(day|month|year)s?/i);
+      if (!ageMatch) return 0; // No age info = no penalty
+      
+      const value = parseInt(ageMatch[1]);
+      const unit = ageMatch[2].toLowerCase();
+      
+      // Convert to days for comparison
+      let ageDays = 0;
+      if (unit.startsWith('day')) {
+        ageDays = value;
+      } else if (unit.startsWith('month')) {
+        ageDays = value * 30;
+      } else if (unit.startsWith('year')) {
+        ageDays = value * 365;
+      }
+      
+      // Penalty tiers:
+      // 0-365 days (1 year): No penalty (0)
+      // 366-730 days (1-2 years): Small penalty (1)
+      // 731-1095 days (2-3 years): Medium penalty (2)
+      // 1096+ days (3+ years): Large penalty (3)
+      if (ageDays <= 365) return 0;
+      if (ageDays <= 730) return 1;
+      if (ageDays <= 1095) return 2;
+      return 3;
+    };
+    
+    const aAgePenalty = getAgePenalty(a);
+    const bAgePenalty = getAgePenalty(b);
+    
+    // Tertiary sort: Age (newer first = lower penalty first)
+    if (aAgePenalty !== bAgePenalty) {
+      return aAgePenalty - bAgePenalty; // Lower penalty = better
     }
-
-    console.log({ "Total results": result.length });
-
-    result = filter(result, meta?.name || "", aliases);
-
-    if (media !== "movie") {
-      result = result
-        .map((el) =>
-          UTILS.getFittedFile(
-            el?.Title || el?.Desc || "No title",
-            s,
-            e,
-            abs,
-            abs_season,
-            abs_episode
-          )
-            ? el
-            : null
-        )
-        .filter((el) => el != null);
-
-      console.log({ "Fitted results": result.length });
-    }
-
-    let stream_results = result
-      .map((el) => UTILS.itemToStream(el, result.length))
-      .filter((el) => el != null && el.nzbUrl != undefined);
-
-    stream_results = [
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities["4k"]),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.fhd),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.hd),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.sd),
-      ...UTILS.filterBasedOnQuality(stream_results, UTILS.qualities.unknown),
-    ];
-
-    cache.set(cacheKey, stream_results);
-
-    console.log({ "Final results": stream_results.length });
-
-    return res.send({ streams: stream_results });
-  })
-  .listen(process.env.PORT || 80, () => {
-    console.log("The server is working on " + process.env.PORT || 80);
+    
+    // 4. HDR quality if same quality, size, and age
+    const getHDRRank = (filename) => {
+      if (/(dolby.?vision|dovi)/i.test(filename)) return 3;
+      if (/hdr10\+/i.test(filename)) return 2;
+      if (/\bhdr10\b/i.test(filename) || /\bhdr\b/i.test(filename)) return 1;
+      return 0;
+    };
+    
+    const aHDRRank = getHDRRank(aFilename);
+    const bHDRRank = getHDRRank(bFilename);
+    
+    return bHDRRank - aHDRRank; // Better HDR first
   });
+  
+  // Log first few results to verify sorting
+  console.log("First 5 sorted streams:");
+  streams.slice(0, 5).forEach((s, i) => {
+    const sizeMatch = s?.title?.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
+    const ageMatch = s?.title?.match(/⏰\s*(\d+)\s*(day|month|year)s?/i);
+    console.log(`${i + 1}. ${s.name} - ${sizeMatch ? sizeMatch[0] : 'Unknown size'} - ${ageMatch ? ageMatch[0] : 'Unknown age'}`);
+  });
+  
+  return streams;
+};
