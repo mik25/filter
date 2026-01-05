@@ -45,18 +45,18 @@ const fileMustInclude =
 
 const SERVERS = [
   // OK ZONE =======================================================================
-  "nntps://987c0dc54b9a6824@eweka.nl:C8dHotTQ@secure.news.easynews.com:563/50",
+  // "nntps://987c0dc54b9a6824@eweka.nl:C8dHotTQ@secure.news.easynews.com:563/50",
   "nntps://Hockeyfreak67:Susieq123!@news.newshosting.com:563/100",
-  "nntps://amarill4711:ydme8sc3@news.newshosting.com:563/100",
+  // "nntps://amarill4711:ydme8sc3@news.newshosting.com:563/100",
   // // TESTING ZONE ====================================================================
   // "nntps://5xi52prey9:Pl27umoO7b0O@uswest.newsdemon.com:563/50",
-  "nntps://aiv575755466:287962398@news.newsgroupdirect.com:563/15",
+  // "nntps://aiv575755466:287962398@news.newsgroupdirect.com:563/15",
   // "nntps://psyon00191128:Labyrinth13!@secure.news.thecubenet.com:563/20",
   // // NO ZONE =========================================================================
   // "nntps://5xi52prey9:Pl27umoO7b0O@uswest.newsdemon.com:563/50",
   // "nntps://5xi52prey9:Pl27umoO7b0O@uswest.newsdemon.com:563/50",
   // // REMAINING ZONE ==================================================================
-  // "nntp://okamiotoko_youkai@hotmail.com:pSbM8tlhGq9wIf1LsKmp@news.eweka.nl:119/45",
+  "nntp://okamiotoko_youkai@hotmail.com:pSbM8tlhGq9wIf1LsKmp@news.eweka.nl:119/45",
   // "nntps://hockeyfreak:susieq123@ssl-eu.astraweb.com:563/1",
   // "nntps://8d813b6ac3f76283:Winnie01!@news.eweka.nl:563/50",
   // "nntps://uf2bcd47415c28035462:778a7249cccf175fb5d114@news.usenet.farm:563/45",

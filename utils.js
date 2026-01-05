@@ -7,10 +7,8 @@ const {
   timeSince,
 } = require("./helper");
 const config = require("./config");
-
-// ============================================================================
-// EPISODE MATCHING FUNCTIONS
-// ============================================================================
+// At the top of utils.js, add the import:
+const streamMetadata = require('./streamMetadata');
 
 let containEandS = (name = "", s, e, abs, abs_season, abs_episode) =>
   name?.includes(`s${s?.padStart(2, "0")}e${e?.padStart(2, "0")} `) ||
@@ -49,7 +47,6 @@ let containEandS = (name = "", s, e, abs, abs_season, abs_episode) =>
 let containE_S = (name = "", s, e, abs, abs_season, abs_episode) =>
   name?.includes(`s${s?.padStart(2, "0")} - ${e?.padStart(2, "0")}`) ||
   name?.includes(`s${s} - ${e?.padStart(2, "0")}`) ||
-  name?.includes(`season ${s} - ${e?.padStart(2, "0")}`) ||
   name?.includes(`season ${s} - ${e?.padStart(2, "0")}`);
 
 let containsAbsoluteE = (name = "", s, e, abs, abs_season, abs_episode) =>
@@ -63,264 +60,6 @@ let containsAbsoluteE_ = (name = "", s, e, abs, abs_season, abs_episode) =>
   name?.includes(` ${abs_episode?.padStart(3, "0")}.`) ||
   name?.includes(` 0${abs_episode}.`) ||
   name?.includes(` ${abs_episode?.padStart(4, "0")}.`);
-
-const getFittedFile = (
-  name = "",
-  s,
-  e,
-  abs = false,
-  abs_season,
-  abs_episode
-) => {
-  name = name.toLowerCase();
-  return (
-    containEandS(name, s, e, abs, abs_season, abs_episode) ||
-    containE_S(name, s, e, abs, abs_season, abs_episode) ||
-    (s == 1 &&
-      (containsAbsoluteE(name, s, e, true, s, e) ||
-        containsAbsoluteE_(name, s, e, true, s, e))) ||
-    (((abs && containsAbsoluteE(name, s, e, abs, abs_season, abs_episode)) ||
-      (abs && containsAbsoluteE_(name, s, e, abs, abs_season, abs_episode))) &&
-      !(
-        name?.includes("s0") ||
-        name?.includes(`s${abs_season}`) ||
-        name?.includes("e0") ||
-        name?.includes(`e${abs_episode}`) ||
-        name?.includes("season")
-      ))
-  );
-};
-
-let isVideo = (element) => {
-  return (
-    element["name"]?.toLowerCase()?.includes(`.mkv`) ||
-    element["name"]?.toLowerCase()?.includes(`.mp4`) ||
-    element["name"]?.toLowerCase()?.includes(`.avi`) ||
-    element["name"]?.toLowerCase()?.includes(`.flv`)
-  );
-};
-
-// ============================================================================
-// QUALITY & METADATA DETECTION (IMPROVED)
-// ============================================================================
-
-function getQuality(name) {
-  if (!name) return 'SD';
-  name = name.toLowerCase();
-  
-  // Detect HDR/DV (what users actually care about)
-  let hdr = '';
-  if (/(dolby.?vision|\.dv\.|dv\.|\bdv\b)/i.test(name)) {
-    hdr = ' DV';
-  } else if (/hdr10\+|hdr10plus/i.test(name)) {
-    hdr = ' HDR10+';
-  } else if (/\bhdr\b/i.test(name)) {
-    hdr = ' HDR';
-  } else if (/\bsdr\b/i.test(name)) {
-    hdr = ' SDR';
-  }
-  
-  // Resolution detection
-  if (['2160', '4k', 'uhd'].some(x => name.includes(x))) return `2160p${hdr}`;
-  if (['1080', 'fhd'].some(x => name.includes(x))) return `1080p${hdr}`;
-  if (['720', 'hd'].some(x => name.includes(x))) return `720p${hdr}`;
-  if (['480p', '380p', 'sd'].some(x => name.includes(x))) return `480p`;
-  return 'SD';
-}
-
-function getSize(size) {
-  var gb = 1024 * 1024 * 1024;
-  var mb = 1024 * 1024;
-
-  return (
-    size / gb > 1
-      ? `${(size / gb).toFixed(2)} GB`
-      : `${(size / mb).toFixed(2)} MB`
-  );
-}
-
-// ============================================================================
-// LANGUAGE DETECTION (ENGLISH-FIRST)
-// ============================================================================
-
-const isEnglish = (fileName) => {
-  if (!fileName) return true; // Default to English
-  fileName = fileName.toLowerCase();
-  
-  // Check for foreign language indicators
-  const foreignPatterns = /(german|french|spanish|italian|dutch|japanese|chinese|korean|russian|polish|portuguese|swedish|norwegian|danish|turkish|arabic|hindi|multi|dubbed|subbed|vostfr|\.ger\.|\.fre\.|\.spa\.|\.ita\.|\.dut\.|\.jap\.|\.kor\.|\.rus\.|\.pol\.|\.por\.|\.swe\.|\.nor\.|\.dan\.|\.tur\.|\.ara\.|\.hin\.)/i;
-  
-  return !foreignPatterns.test(fileName);
-};
-
-const getFlagFromName = (fileName) => {
-  if (!fileName) return '🇬🇧';
-  fileName = fileName.toLowerCase();
-  
-  if (isEnglish(fileName)) return '🇬🇧';
-  if (/multi/i.test(fileName)) return '🌐';
-  if (/(french|vf|vff|vostfr)/i.test(fileName)) return '🇫🇷';
-  if (/german|\.ger\./i.test(fileName)) return '🇩🇪';
-  if (/spanish|\.spa\./i.test(fileName)) return '🇪🇸';
-  if (/italian|\.ita\./i.test(fileName)) return '🇮🇹';
-  
-  return '🌐'; // Multi-language default
-};
-
-// ============================================================================
-// SORTING (ENGLISH-FIRST, QUALITY, HDR, SIZE)
-// ============================================================================
-
-const sortStreams = (streams = []) => {
-  const qualityOrder = { '2160p': 1, '1080p': 2, '720p': 3, '480p': 4, 'SD': 5 };
-  const hdrOrder = { 'DV': 5, 'HDR10+': 4, 'HDR': 3, 'SDR': 2, '': 1 };
-  
-  streams.sort((a, b) => {
-    const aTitle = (a?.Title || a?.Desc || '').toLowerCase();
-    const bTitle = (b?.Title || b?.Desc || '').toLowerCase();
-    
-    // 1. ENGLISH FIRST
-    const aEng = isEnglish(aTitle);
-    const bEng = isEnglish(bTitle);
-    if (aEng !== bEng) return aEng ? -1 : 1;
-    
-    // 2. Quality (2160p > 1080p > 720p > 480p > SD)
-    const aQualityFull = getQuality(aTitle);
-    const bQualityFull = getQuality(bTitle);
-    const aQuality = aQualityFull.split(' ')[0];
-    const bQuality = bQualityFull.split(' ')[0];
-    const aRank = qualityOrder[aQuality] || 999;
-    const bRank = qualityOrder[bQuality] || 999;
-    if (aRank !== bRank) return aRank - bRank;
-    
-    // 3. HDR Type (DV > HDR10+ > HDR > SDR > none)
-    const aHDR = aQualityFull.split(' ')[1] || '';
-    const bHDR = bQualityFull.split(' ')[1] || '';
-    const aHDRRank = hdrOrder[aHDR] || 0;
-    const bHDRRank = hdrOrder[bHDR] || 0;
-    if (aHDRRank !== bHDRRank) return bHDRRank - aHDRRank;
-    
-    // 4. Size (largest first)
-    return (b?.Size || 0) - (a?.Size || 0);
-  });
-  
-  return streams;
-};
-
-// Legacy support - keep old function name but use new sorting
-const bringFrenchVideoToTheTopOfList = (streams = []) => {
-  console.warn('⚠️  Using deprecated bringFrenchVideoToTheTopOfList - now sorts English-first');
-  return sortStreams(streams);
-};
-
-const filterBasedOnQuality = (streams = [], quality = "") => {
-  if (!quality) return sortStreams(streams);
-  
-  // Convert old emoji-based quality to new format
-  const qualityMap = {
-    '🌟4k': '2160p',
-    '🎥FHD': '1080p',
-    '📺HD': '720p',
-    '📱SD': '480p',
-  };
-  
-  const normalizedQuality = qualityMap[quality] || quality;
-  
-  const filtered = streams.filter((el) => {
-    const elQuality = getQuality(el?.Title || el?.Desc || '');
-    return elQuality.startsWith(normalizedQuality);
-  });
-
-  console.log({ filterBasedOnQuality: filtered.length, quality: normalizedQuality });
-  return sortStreams(filtered);
-};
-
-// ============================================================================
-// STREAM OUTPUT (CLEANER METADATA)
-// ============================================================================
-
-const itemToStream = (el, total = 1) => {
-  const title = el?.Title || el?.Desc || 'No title';
-  const quality = getQuality(title);
-  const flag = getFlagFromName(title);
-  const size = getSize(el?.Size || 0);
-  const tracker = el?.Tracker || 'NZB';
-  
-  return {
-    nzbUrl: el?.Link,
-    name: `${flag} ${quality} [${tracker}]`,
-    title: `${sliceLngText(title, 40)}\n${size} • ${tracker}\n${timeSince(el?.Date)}`,
-    fileMustInclude,
-    servers: SERVERS,
-    behaviorHints: {
-      filename: title,
-      notWebReady: true,
-      videoSize: el?.Size || undefined,
-      bingeGroup: `${config.id}|${quality}|${flag}`,
-    }
-  };
-};
-
-// ============================================================================
-// METADATA FETCHING
-// ============================================================================
-
-function getMeta(id, type) {
-  var [tt, s, e] = id.split(":");
-
-  return fetch(`https://v3-cinemeta.strem.io/meta/${type}/${tt}.json`)
-    .then((res) => res.json())
-    .then((json) => {
-      return {
-        name: json.meta["name"],
-        year: json.meta["releaseInfo"]?.substring(0, 4) ?? 0,
-      };
-    })
-    .catch((err) =>
-      fetch(`https://v2.sg.media-imdb.com/suggestion/t/${tt}.json`)
-        .then((res) => res.json())
-        .then((json) => {
-          return json.d[0];
-        })
-        .then(({ l, y }) => ({ name: l, year: y }))
-    );
-}
-
-async function getImdbFromKitsu(id) {
-  var [kitsu, _id, e] = id.split(":");
-
-  return fetch(
-    `https://vproxy-one.vercel.app/s/MTI0UjMyMzQyM1IyM0YzMjQ=/kitsu/meta/anime/${kitsu}:${_id}.json`
-  )
-    .then((_res) => _res.json())
-    .then((json) => {
-      return json["meta"];
-    })
-    .then((json) => {
-      try {
-        let imdb = json["imdb_id"];
-        let meta = json["videos"].find((el) => el.id == id);
-        return [
-          imdb,
-          (meta["imdbSeason"] ?? 1).toString(),
-          (meta["imdbEpisode"] ?? 1).toString(),
-          (meta["season"] ?? 1).toString(),
-          (meta["imdbSeason"] ?? 1).toString() == 1
-            ? (meta["imdbEpisode"] ?? 1).toString()
-            : (meta["episode"] ?? 1).toString(),
-          meta["imdbEpisode"] != meta["episode"] || meta["imdbSeason"] == 1,
-          "aliases" in json ? json["aliases"] : [],
-        ];
-      } catch (error) {
-        return null;
-      }
-    })
-    .catch((err) => null);
-}
-
-// ============================================================================
-// NZB INDEXER FETCHERS
-// ============================================================================
 
 const fetchNZBGeek = async (query, type = "series") => {
   await new Promise((r) =>
@@ -361,7 +100,7 @@ const fetchNZBGeek = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -429,7 +168,7 @@ const fetchToshoNZB = async (query, type = "series") => {
 
         console.log({ Initial: results?.length });
         if (results.length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results.map((result) => {
               return new Promise((resolve, reject) => {
                 if (!result) resolve(null);
@@ -507,7 +246,7 @@ const fetchNZBSu = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -580,7 +319,7 @@ const fetchNZBaltHUB = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -653,7 +392,7 @@ const fetchNZBNinjaCentral = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -722,7 +461,7 @@ const fetchNZBDrunkenSlug = async (query, type = "series") => {
 
         console.log({ Initial: results["item"]?.length });
         if (results["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -796,7 +535,7 @@ const fetchNZBFinder = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -870,7 +609,7 @@ const fetchUsenetCrawler = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -944,7 +683,7 @@ const fetchNZBPlanet = async (query, type = "series") => {
 
         console.log({ Initial: results["channel"]["item"]?.length });
         if (results["channel"]["item"].length != 0) {
-          torrent_results = await Promise.all(
+          const torrent_results = await Promise.all(
             results["channel"]["item"].map((result) => {
               return new Promise((resolve, reject) => {
                 resolve({
@@ -979,10 +718,6 @@ const fetchNZBPlanet = async (query, type = "series") => {
   }
 };
 
-// ============================================================================
-// AGGREGATE FETCHER
-// ============================================================================
-
 const fetchAllNZB = async (query, type = "series") => {
   try {
     const results = await Promise.all([
@@ -1003,9 +738,450 @@ const fetchAllNZB = async (query, type = "series") => {
   }
 };
 
-// ============================================================================
-// EXPORTS
-// ============================================================================
+function getMeta(id, type) {
+  var [tt, s, e] = id.split(":");
+
+  return fetch(`https://v3-cinemeta.strem.io/meta/${type}/${tt}.json`)
+    .then((res) => res.json())
+    .then((json) => {
+      return {
+        name: json.meta["name"],
+        year: json.meta["releaseInfo"]?.substring(0, 4) ?? 0,
+      };
+    })
+    .catch((err) =>
+      fetch(`https://v2.sg.media-imdb.com/suggestion/t/${tt}.json`)
+        .then((res) => res.json())
+        .then((json) => {
+          return json.d[0];
+        })
+        .then(({ l, y }) => ({ name: l, year: y }))
+    );
+}
+
+async function getImdbFromKitsu(id) {
+  var [kitsu, _id, e] = id.split(":");
+
+  return fetch(
+    `https://vproxy-one.vercel.app/s/MTI0UjMyMzQyM1IyM0YzMjQ=/kitsu/meta/anime/${kitsu}:${_id}.json`
+  )
+    .then((_res) => _res.json())
+    .then((json) => {
+      return json["meta"];
+    })
+    .then((json) => {
+      try {
+        let imdb = json["imdb_id"];
+        let meta = json["videos"].find((el) => el.id == id);
+        return [
+          imdb,
+          (meta["imdbSeason"] ?? 1).toString(),
+          (meta["imdbEpisode"] ?? 1).toString(),
+          (meta["season"] ?? 1).toString(),
+          (meta["imdbSeason"] ?? 1).toString() == 1
+            ? (meta["imdbEpisode"] ?? 1).toString()
+            : (meta["episode"] ?? 1).toString(),
+          meta["imdbEpisode"] != meta["episode"] || meta["imdbSeason"] == 1,
+          "aliases" in json ? json["aliases"] : [],
+        ];
+      } catch (error) {
+        return null;
+      }
+    })
+    .catch((err) => null);
+}
+
+const qualities = {
+  "4k": "🌟4k",
+  fhd: "🎥FHD",
+  hd: "📺HD",
+  sd: "📱SD",
+  unknown: "none",
+};
+
+const vf = ["vf", "vff", "french", "frn"];
+const multi = ["multi"];
+const vostfr = ["vostfr", "english", "eng"];
+
+let isVideo = (element) => {
+  return (
+    element["name"]?.toLowerCase()?.includes(`.mkv`) ||
+    element["name"]?.toLowerCase()?.includes(`.mp4`) ||
+    element["name"]?.toLowerCase()?.includes(`.avi`) ||
+    element["name"]?.toLowerCase()?.includes(`.flv`)
+  );
+};
+
+const getFittedFile = (
+  name = "",
+  s,
+  e,
+  abs = false,
+  abs_season,
+  abs_episode
+) => {
+  name = name.toLowerCase();
+  return (
+    containEandS(name, s, e, abs, abs_season, abs_episode) ||
+    containE_S(name, s, e, abs, abs_season, abs_episode) ||
+    (s == 1 &&
+      (containsAbsoluteE(name, s, e, true, s, e) ||
+        containsAbsoluteE_(name, s, e, true, s, e))) ||
+    (((abs && containsAbsoluteE(name, s, e, abs, abs_season, abs_episode)) ||
+      (abs && containsAbsoluteE_(name, s, e, abs, abs_season, abs_episode))) &&
+      !(
+        name?.includes("s0") ||
+        name?.includes(`s${abs_season}`) ||
+        name?.includes("e0") ||
+        name?.includes(`e${abs_episode}`) ||
+        name?.includes("season")
+      ))
+  );
+};
+
+function getSize(size) {
+  var gb = 1024 * 1024 * 1024;
+  var mb = 1024 * 1024;
+
+  return (
+    "💾 " +
+    (size / gb > 1
+      ? `${(size / gb).toFixed(2)} GB`
+      : `${(size / mb).toFixed(2)} MB`)
+  );
+}
+
+function getQuality(name) {
+  if (!name) {
+    return name;
+  }
+  name = name.toLowerCase();
+
+  if (["2160", "4k", "uhd"].some((x) => name.includes(x)))
+    return " " + qualities["4k"];
+  if (["1080", "fhd"].some((x) => name.includes(x))) return " " + qualities.fhd;
+  if (["720", "hd"].some((x) => name.includes(x))) return " " + qualities.hd;
+  if (["480p", "380p", "sd"].some((x) => name.includes(x)))
+    return " " + qualities.sd;
+  return "";
+}
+
+const isSomeContent = (file_name = "", langKeywordsArray = []) => {
+  file_name = file_name.toLowerCase();
+  return langKeywordsArray.some((word) => file_name.includes(word));
+};
+
+const isVfContent = (file_name) => isSomeContent(file_name, vf);
+const isMultiContent = (file_name) => isSomeContent(file_name, multi);
+const isVostfrContent = (file_name) => isSomeContent(file_name, vostfr);
+
+const bringFrenchVideoToTheTopOfList = (streams = []) => {
+  streams.sort((a, b) => {
+    let a_lower = (a?.description || a?.title || "").toLowerCase();
+    let b_lower = (b?.description || b?.title || "").toLowerCase();
+    return isVfContent(a_lower) ||
+      isVostfrContent(a_lower) ||
+      isMultiContent(a_lower)
+      ? -1
+      : isVfContent(b_lower) ||
+        isVostfrContent(b_lower) ||
+        isMultiContent(a_lower)
+      ? 1
+      : 0;
+  });
+  return streams;
+};
+
+const filterBasedOnQuality = (streams = [], quality = "") => {
+  if (!quality) return [];
+  if (!Object.values(qualities).includes(quality)) return [];
+
+  if (quality == qualities.unknown) {
+    streams = streams.filter((el) => {
+      const l = `${el?.name}`;
+      return (
+        !l.includes(qualities["4k"]) &&
+        !l.includes(qualities.fhd) &&
+        !l.includes(qualities.hd) &&
+        !l.includes(qualities.sd)
+      );
+    });
+  } else {
+    streams = streams.filter((el) => el.name.includes(quality));
+  }
+
+  console.log({ filterBasedOnQuality: streams.length, quality });
+  return bringFrenchVideoToTheTopOfList(streams);
+};
+
+const getFlagFromName = (file_name) => {
+  switch (true) {
+    case isVfContent(file_name):
+      return "| 🇫🇷";
+    case isMultiContent(file_name):
+      return "| 🌍";
+    case isVostfrContent(file_name):
+      return "| 🇬🇧";
+    default:
+      return "";
+  }
+};
+
+const isEnglish = (fileName) => {
+  if (!fileName) return true;
+  fileName = fileName.toLowerCase();
+  
+  const foreignPatterns = /(german|french|spanish|italian|dutch|japanese|chinese|korean|russian|polish|portuguese|swedish|norwegian|danish|turkish|arabic|hindi|multi|dubbed|subbed|vostfr|\.ger\.|\.fre\.|\.spa\.|\.ita\.|\.dut\.|\.jap\.|\.kor\.|\.rus\.|\.pol\.|\.por\.|\.swe\.|\.nor\.|\.dan\.|\.tur\.|\.ara\.|\.hin\.)/i;
+  
+  return !foreignPatterns.test(fileName);
+};
+
+const sortStreams = (streams = []) => {
+  if (!streams || streams.length === 0) return streams;
+  
+  console.log(`Sorting ${streams.length} streams...`);
+  
+  streams.sort((a, b) => {
+    const aFilename = (a?.behaviorHints?.filename || '').toLowerCase();
+    const bFilename = (b?.behaviorHints?.filename || '').toLowerCase();
+    
+    // 1. QUALITY: Best quality first (2160p > 1080p > 720p > 480p > SD)
+    const getQualityRank = (filename) => {
+      if (filename.includes('2160p') || filename.includes('4k') || filename.includes('uhd')) return 1;
+      if (filename.includes('1080p') || filename.includes('fhd')) return 2;
+      if (filename.includes('720p') || filename.includes('hd')) return 3;
+      if (filename.includes('480p') || filename.includes('sd')) return 4;
+      return 5; // SD or unknown
+    };
+    
+    const aQualityRank = getQualityRank(aFilename);
+    const bQualityRank = getQualityRank(bFilename);
+    
+    // Primary sort: Quality (best first)
+    if (aQualityRank !== bQualityRank) {
+      return aQualityRank - bQualityRank;
+    }
+    
+    // 2. SIZE: Larger files first (within same quality)
+    const extractSizeMB = (stream) => {
+      // Try to get from title first
+      if (stream?.title) {
+        const sizeMatch = stream.title.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
+        if (sizeMatch) {
+          const value = parseFloat(sizeMatch[1]);
+          return sizeMatch[2].toUpperCase() === 'GB' ? value * 1024 : value;
+        }
+      }
+      
+      // Fallback: Extract from filename or use 0
+      const filename = stream?.behaviorHints?.filename || '';
+      const sizeMatch = filename.match(/(\d+(\.\d+)?)\s*(GB|MB|GiB|MiB)/i);
+      if (sizeMatch) {
+        const value = parseFloat(sizeMatch[1]);
+        const unit = sizeMatch[3].toUpperCase();
+        return unit.startsWith('G') ? value * 1024 : value;
+      }
+      
+      return 0;
+    };
+    
+    const aSize = extractSizeMB(a);
+    const bSize = extractSizeMB(b);
+    
+    // Secondary sort: Size (larger first)
+    if (aSize !== bSize) {
+      return bSize - aSize; // Descending order
+    }
+    
+    // 3. Third sort: HDR quality if same quality and size
+    const getHDRRank = (filename) => {
+      if (/(dolby.?vision|dovi)/i.test(filename)) return 3;
+      if (/hdr10\+/i.test(filename)) return 2;
+      if (/\bhdr10\b/i.test(filename) || /\bhdr\b/i.test(filename)) return 1;
+      return 0;
+    };
+    
+    const aHDRRank = getHDRRank(aFilename);
+    const bHDRRank = getHDRRank(bFilename);
+    
+    return bHDRRank - aHDRRank; // Better HDR first
+  });
+  
+  // Log first few results to verify sorting
+  console.log("First 5 sorted streams:");
+  streams.slice(0, 5).forEach((s, i) => {
+    const sizeMatch = s?.title?.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
+    console.log(`${i + 1}. ${s.name} - ${sizeMatch ? sizeMatch[0] : 'Unknown size'}`);
+  });
+  
+  return streams;
+};
+
+const deduplicateNZBResults = (results) => {
+  if (!results || results.length === 0) return results;
+  
+  console.log(`\n=== Deduplicating ${results.length} NZB results ===`);
+  
+  const seen = new Map();
+  const deduplicated = [];
+  
+  for (const result of results) {
+    const title = result.Title || result.Desc || '';
+    const size = result.Size || 0;
+    const date = result.Date || new Date().toISOString();
+    
+    // Extract release group from title
+    const groupMatch = title.match(/-([A-Za-z0-9]+)$/i) || 
+                       title.match(/\[([A-Za-z0-9]+)\]/i) ||
+                       title.match(/\{([A-Za-z0-9]+)\}/i);
+    const releaseGroup = groupMatch ? groupMatch[1].toLowerCase() : 'unknown';
+    
+    // MUCH STRICTER: Round to nearest 10MB (not 100MB!)
+    // True duplicates should be byte-identical or within a few MB
+    const sizeMB = Math.round(size / (1024 * 1024) / 10) * 10;
+    
+    // Create unique key: group + size
+    const key = `${releaseGroup}-${sizeMB}`;
+    
+    if (!seen.has(key)) {
+      // First time seeing this release
+      seen.set(key, { result, date: new Date(date) });
+      deduplicated.push(result);
+      console.log(`✓ Keep: ${title.substring(0, 60)}... [${result.Tracker}] (${(size / (1024**3)).toFixed(2)} GB)`);
+    } else {
+      // Duplicate found - check if this one is newer
+      const existing = seen.get(key);
+      const existingAge = new Date(existing.date);
+      const currentAge = new Date(date);
+      
+      if (currentAge > existingAge) {
+        // This one is newer - replace the old one
+        const index = deduplicated.indexOf(existing.result);
+        if (index !== -1) {
+          deduplicated[index] = result;
+          seen.set(key, { result, date: currentAge });
+          console.log(`↻ Replace with newer: ${title.substring(0, 60)}... [${result.Tracker}]`);
+        }
+      } else {
+        // Keep existing (it's newer)
+        console.log(`✗ Skip duplicate: ${title.substring(0, 60)}... [${result.Tracker}]`);
+      }
+    }
+  }
+  
+  console.log(`\nDeduplication: ${results.length} → ${deduplicated.length} unique releases`);
+  console.log(`Removed ${results.length - deduplicated.length} duplicates\n`);
+  
+  return deduplicated;
+};
+
+const itemToStream = (el, total = 1) => {
+  const title = el?.Title || el?.Desc || "No title";
+  const tracker = el?.Tracker || "NZB";
+  const category = el?.Category || "Unknown";
+  
+  // Extract all metadata using helper
+  const metadata = streamMetadata.extractStreamMetadata(title);
+  
+  // Format size
+  const gb = 1024 * 1024 * 1024;
+  const mb = 1024 * 1024;
+  const size = el?.Size || 0;
+  const sizeStr = size > gb ? 
+    `${(size / gb).toFixed(2)} GB` : 
+    `${(size / mb).toFixed(2)} MB`;
+  
+  const timeStr = timeSince(el?.Date);
+  
+  // Build description lines (right side details)
+  const descriptionLines = [];
+  
+  descriptionLines.push(`📺 ${sliceLngText(title, 40)}`);
+  
+  // Quality line with HDR
+  if (metadata.hdr) {
+    descriptionLines.push(`${metadata.quality.emoji} ${metadata.quality.resolution} | ${metadata.hdr}`);
+  } else {
+    descriptionLines.push(`${metadata.quality.emoji} ${metadata.quality.resolution}`);
+  }
+  
+  // Source and codec
+  if (metadata.source && metadata.codec) {
+    descriptionLines.push(`${metadata.source} | ${metadata.codec}`);
+  } else if (metadata.source) {
+    descriptionLines.push(metadata.source);
+  } else if (metadata.codec) {
+    descriptionLines.push(metadata.codec);
+  }
+  
+  // Audio
+  if (metadata.audio) {
+    descriptionLines.push(metadata.audio);
+  }
+  
+  // Size and time
+  descriptionLines.push(`💾 ${sizeStr} | ⏰ ${timeStr}`);
+  
+  // Language line with optional release group
+  let languageLine = `${metadata.language.flag} ${metadata.language.name}`;
+  if (metadata.releaseGroup) {
+    languageLine += ` | ${metadata.releaseGroup}`;
+  }
+  descriptionLines.push(languageLine);
+  
+  // Category and tracker
+  descriptionLines.push(`🎥 ${category} | 📡 ${tracker}`);
+  
+  // Filename (truncated)
+  const shortTitle = title.length > 50 ? title.substring(0, 47) + '...' : title;
+  descriptionLines.push(`📄 ${shortTitle}`);
+  
+  // BUILD ENHANCED STREAM NAME (left side - compact with key info)
+  let streamName = `🎬 NZB ${metadata.quality.resolution}`;
+  
+  // Add HDR info if present (for 4K content especially)
+  if (metadata.hdr && metadata.quality.resolution === '2160p') {
+    // Shorten HDR labels for stream name
+    const shortHDR = metadata.hdr
+      .replace('🎨 Dolby Vision', 'Dolby Vision')
+      .replace('🌈 HDR10+', 'HDR10+')
+      .replace('🌟 HDR10', 'HDR10')
+      .replace('✨ HDR', 'HDR')
+      .replace('☀️ HLG', 'HLG')
+      .replace('🔟 10-bit', '10bit')
+      .replace('🎨 8-bit', '8bit');
+    streamName += ` ${shortHDR}`;
+  }
+  
+  // Add file size (important for quick scanning)
+  streamName += ` ${sizeStr}`;
+  
+  // Add dub indicator if present
+  if (metadata.dubInfo.isDubbed && (metadata.dubInfo.confidence === 'high' || metadata.dubInfo.confidence === 'medium')) {
+    streamName += ` 🎙️ DUB`;
+  }
+  
+  // Add tracker/indexer name in brackets
+  streamName += ` [${tracker}]`;
+  
+  return {
+    nzbUrl: el?.Link,
+    name: streamName,
+    title: descriptionLines.join('\n'),
+    fileMustInclude,
+    servers: SERVERS,
+    behaviorHints: {
+      filename: title,
+      notWebReady: true,
+      bingeGroup: `${config.id}|${metadata.quality.resolution}`,
+    },
+    options: {
+      proxyHeaders: {
+        request: { "User-Agent": "Stremio" },
+      },
+    },
+  };
+};
 
 module.exports = {
   containEandS,
@@ -1018,8 +1194,8 @@ module.exports = {
   getSize,
   getQuality,
   filterBasedOnQuality,
-  sortStreams,
-  bringFrenchVideoToTheTopOfList, // Legacy support
+  qualities,
+  bringFrenchVideoToTheTopOfList,
   getFlagFromName,
   getFittedFile,
   fetchNZBGeek,
@@ -1032,6 +1208,8 @@ module.exports = {
   fetchToshoNZB,
   fetchUsenetCrawler,
   fetchNZBPlanet,
-  itemToStream,
+  deduplicateNZBResults,
   isEnglish,
+  sortStreams,
+  itemToStream,
 };
