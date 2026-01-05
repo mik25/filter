@@ -939,119 +939,117 @@ const isEnglish = (fileName) => {
 const sortStreams = (streams = []) => {
   if (!streams || streams.length === 0) return streams;
   
-  console.log(`Sorting ${streams.length} streams...`);
+  console.log(`\n=== SORTING ${streams.length} STREAMS ===`);
   
   streams.sort((a, b) => {
-    const aFilename = (a?.behaviorHints?.filename || '').toLowerCase();
-    const bFilename = (b?.behaviorHints?.filename || '').toLowerCase();
-    
-    // 1. QUALITY: Best quality first (2160p > 1080p > 720p > 480p > SD)
-    const getQualityRank = (filename) => {
-      if (filename.includes('2160p') || filename.includes('4k') || filename.includes('uhd')) return 1;
-      if (filename.includes('1080p') || filename.includes('fhd')) return 2;
-      if (filename.includes('720p') || filename.includes('hd')) return 3;
-      if (filename.includes('480p') || filename.includes('sd')) return 4;
-      return 5; // SD or unknown
+    // Extract quality from stream name (e.g., "🎬 NZB 1080p 3.52 GB [NinjaCentral]")
+    const getQualityValue = (stream) => {
+      const name = stream?.name || '';
+      if (name.includes('2160p')) return 2160;
+      if (name.includes('1080p')) return 1080;
+      if (name.includes('720p')) return 720;
+      if (name.includes('480p')) return 480;
+      return 0; // SD
     };
     
-    const aQualityRank = getQualityRank(aFilename);
-    const bQualityRank = getQualityRank(bFilename);
+    const aQuality = getQualityValue(a);
+    const bQuality = getQualityValue(b);
     
-    // Primary sort: Quality (best first)
-    if (aQualityRank !== bQualityRank) {
-      return aQualityRank - bQualityRank;
+    // 1. QUALITY: Higher resolution first (1080p before 720p)
+    if (aQuality !== bQuality) {
+      return bQuality - aQuality; // Descending
     }
     
-    // 2. SIZE: Larger files first (within same quality)
-    const extractSizeMB = (stream) => {
-      // Try to get from title first
-      if (stream?.title) {
-        const sizeMatch = stream.title.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
-        if (sizeMatch) {
-          const value = parseFloat(sizeMatch[1]);
-          return sizeMatch[2].toUpperCase() === 'GB' ? value * 1024 : value;
-        }
+    // Extract size in MB from stream name
+    const getSizeInMB = (stream) => {
+      const name = stream?.name || '';
+      
+      // Match "X.XX GB" or "XXX.XX MB" in stream name
+      const gbMatch = name.match(/([\d.]+)\s*GB/i);
+      if (gbMatch) {
+        return parseFloat(gbMatch[1]) * 1024;
       }
       
-      // Fallback: Extract from filename or use 0
-      const filename = stream?.behaviorHints?.filename || '';
-      const sizeMatch = filename.match(/(\d+(\.\d+)?)\s*(GB|MB|GiB|MiB)/i);
-      if (sizeMatch) {
-        const value = parseFloat(sizeMatch[1]);
-        const unit = sizeMatch[3].toUpperCase();
-        return unit.startsWith('G') ? value * 1024 : value;
+      const mbMatch = name.match(/([\d.]+)\s*MB/i);
+      if (mbMatch) {
+        return parseFloat(mbMatch[1]);
       }
       
       return 0;
     };
     
-    const aSize = extractSizeMB(a);
-    const bSize = extractSizeMB(b);
+    const aSize = getSizeInMB(a);
+    const bSize = getSizeInMB(b);
     
-    // Secondary sort: Size (larger first)
-    if (aSize !== bSize) {
-      return bSize - aSize; // Descending order
+    // 2. SIZE: Larger files first (within same quality)
+    if (Math.abs(aSize - bSize) > 10) { // Ignore tiny differences
+      return bSize - aSize; // Descending
     }
     
-    // 3. AGE PENALTY: Penalize releases older than 1 year
-    const getAgePenalty = (stream) => {
-      // Extract age from title (format: "⏰ X days/months/years")
-      const ageMatch = stream?.title?.match(/⏰\s*(\d+)\s*(day|month|year)s?/i);
-      if (!ageMatch) return 0; // No age info = no penalty
+    // Extract age in days from title (from our metadata: "⏰ 2 years")
+    const getAgeDays = (stream) => {
+      const title = stream?.title || '';
+      const ageMatch = title.match(/⏰\s*(\d+)\s*(day|month|year)s?/i);
+      
+      if (!ageMatch) return 999999; // Unknown = treat as very old
       
       const value = parseInt(ageMatch[1]);
       const unit = ageMatch[2].toLowerCase();
       
-      // Convert to days for comparison
-      let ageDays = 0;
-      if (unit.startsWith('day')) {
-        ageDays = value;
-      } else if (unit.startsWith('month')) {
-        ageDays = value * 30;
-      } else if (unit.startsWith('year')) {
-        ageDays = value * 365;
-      }
+      if (unit.startsWith('day')) return value;
+      if (unit.startsWith('month')) return value * 30;
+      if (unit.startsWith('year')) return value * 365;
       
-      // Penalty tiers:
-      // 0-365 days (1 year): No penalty (0)
-      // 366-730 days (1-2 years): Small penalty (1)
-      // 731-1095 days (2-3 years): Medium penalty (2)
-      // 1096+ days (3+ years): Large penalty (3)
-      if (ageDays <= 365) return 0;
-      if (ageDays <= 730) return 1;
-      if (ageDays <= 1095) return 2;
-      return 3;
+      return 999999;
     };
     
-    const aAgePenalty = getAgePenalty(a);
-    const bAgePenalty = getAgePenalty(b);
+    const aAge = getAgeDays(a);
+    const bAge = getAgeDays(b);
     
-    // Tertiary sort: Age (newer first = lower penalty first)
-    if (aAgePenalty !== bAgePenalty) {
-      return aAgePenalty - bAgePenalty; // Lower penalty = better
+    // 3. AGE: Newer releases first (lower days = better)
+    if (Math.abs(aAge - bAge) > 30) { // More than 1 month difference
+      return aAge - bAge; // Ascending (lower = newer = better)
     }
     
-    // 4. HDR quality if same quality, size, and age
-    const getHDRRank = (filename) => {
-      if (/(dolby.?vision|dovi)/i.test(filename)) return 3;
-      if (/hdr10\+/i.test(filename)) return 2;
-      if (/\bhdr10\b/i.test(filename) || /\bhdr\b/i.test(filename)) return 1;
+    // 4. BONUS: Prioritize multi-audio/dubbed content
+    const isDubbed = (stream) => {
+      const name = stream?.name || '';
+      return name.includes('🎙️') || name.includes('DUB');
+    };
+    
+    const aDubbed = isDubbed(a) ? 1 : 0;
+    const bDubbed = isDubbed(b) ? 1 : 0;
+    
+    if (aDubbed !== bDubbed) {
+      return bDubbed - aDubbed; // Dubbed first
+    }
+    
+    // 5. Final tiebreaker: HDR/REMUX quality indicators
+    const getSourceRank = (stream) => {
+      const title = stream?.title || '';
+      if (title.includes('💿 REMUX')) return 3;
+      if (title.includes('💿 BluRay')) return 2;
+      if (title.includes('🌐 WEB-DL')) return 1;
       return 0;
     };
     
-    const aHDRRank = getHDRRank(aFilename);
-    const bHDRRank = getHDRRank(bFilename);
+    const aSource = getSourceRank(a);
+    const bSource = getSourceRank(b);
     
-    return bHDRRank - aHDRRank; // Better HDR first
+    return bSource - aSource; // Better source first
   });
   
-  // Log first few results to verify sorting
-  console.log("First 5 sorted streams:");
-  streams.slice(0, 5).forEach((s, i) => {
-    const sizeMatch = s?.title?.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
-    const ageMatch = s?.title?.match(/⏰\s*(\d+)\s*(day|month|year)s?/i);
-    console.log(`${i + 1}. ${s.name} - ${sizeMatch ? sizeMatch[0] : 'Unknown size'} - ${ageMatch ? ageMatch[0] : 'Unknown age'}`);
+  // Log results to verify
+  console.log('\n📊 SORTED RESULTS (Top 10):');
+  streams.slice(0, 10).forEach((s, i) => {
+    const name = s?.name || '';
+    const quality = name.match(/\d{3,4}p|SD/)?.[0] || '?';
+    const size = name.match(/([\d.]+\s*[GM]B)/i)?.[0] || '?';
+    const age = s?.title?.match(/⏰\s*\d+\s*\w+/i)?.[0] || '?';
+    const lang = s?.title?.match(/(🎙️|🇰🇷|🇯🇵|🇩🇪|🇫🇷|🇺🇸|🎬)\s*[^|]+/i)?.[0]?.trim() || '?';
+    console.log(`${String(i + 1).padStart(2)}. ${quality.padEnd(6)} ${size.padEnd(10)} ${age.padEnd(12)} ${lang.substring(0, 25)}`);
   });
+  console.log('=== END SORT ===\n');
   
   return streams;
 };
