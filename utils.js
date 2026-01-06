@@ -16,11 +16,11 @@ const ENABLED_INDEXERS = {
   nzbgeek: true,           // ✅ Core - Best overall coverage
   drunkenslug: true,       // ✅ Core - Quality releases, multi-audio
   finder: true,            // ✅ Core - Good for older/rare content
-  tosho: true,             // ✅ Specialist - Foreign cinema, varied sources
+  tosho: false,             // ✅ Specialist - Foreign cinema, varied sources
   usenetcrawler: true,     // ⚠️  Often dupes NZBGeek (disable to speed up)
   althub: false,           // ❌ Regional SA - disable unless needed
   ninjacentral: false,     // ❌ Low unique content - disable to speed up
-  nzbsu: false,            // ❌ High dupe rate - disable to speed up
+  nzbsu: true,            // ❌ High dupe rate - disable to speed up
   planet: false,           // ❌ High dupe rate - disable to speed up
 };
 
