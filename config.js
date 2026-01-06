@@ -1,9 +1,9 @@
 const config = {
-  id: "daiki.nzbdon.stream",
+  id: "hy.nzbdon.stream",
   version: "1.0.1",
-  name: "NZBDon",
+  name: "HY NZBDon",
   description: "Movie & TV Streams from Nzb ",
-  logo: "https://ia804607.us.archive.org/13/items/github.com-Jackett-Jackett_-_2022-01-03_07-53-24/__ia_thumb.jpg",
+  logo: "https://t4.ftcdn.net/jpg/05/00/82/95/360_F_500829584_ckkeC4QRiQLhvxSc6ZakqGVQszFkBW7C.jpg",
   resources: [
     {
       name: "stream",
