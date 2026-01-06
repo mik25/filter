@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "description": "NZB addon",
   "main": "index.js",
-  "repository": "https://github.com/daniwalter001/jackett-addon.git",
+  "repository": "https://github.com/mik25/filter.git",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node ./index.js",
@@ -13,7 +13,7 @@
     "addon",
     "stremio"
   ],
-  "author": "daniwalter001",
+  "author": "mikmc",
   "license": "ISC",
   "dependencies": {
     "all-debrid-api": "^1.2.0",
