@@ -62,6 +62,7 @@ app
     let [tt, s, e, abs_season, abs_episode, abs, aliases] = tmp;
 
     console.log(tmp);
+    console.log(`🎯 IMDB ID: ${tt}`); // Log IMDB ID
 
     let meta = await UTILS.getMeta(tt, media);
 
@@ -82,25 +83,34 @@ app
     let result = [];
 
     if (media === "movie") {
+      // ✅ Pass IMDB ID for movies
       result = await UTILS.fetchAllNZB(
-        simplifiedName(query) + " " + meta?.year,
-        "movie"
+        simplifiedName(query) + " " + meta?.year, // Fallback query
+        "movie",
+        tt // IMDB ID
       );
     } else if (media === "series" || media === "anime") {
-      result = await handleSearch(
-        UTILS.fetchAllNZB,
-        query,
-        s,
-        e,
-        abs_season,
-        abs_episode,
-        abs
+      // ✅ Pass IMDB ID + season/episode for series
+      result = await UTILS.fetchAllNZB(
+        query, // Fallback query
+        "series",
+        tt, // IMDB ID
+        s,  // Season
+        e   // Episode
       );
     }
 
     console.log({ "Total results": result.length });
 
-    // Deduplicate NZB results (with safety fallback)
+    // Log search method breakdown
+    const imdbResults = result.filter(r => r.SearchMethod?.includes('imdb')).length;
+    const textResults = result.filter(r => r.SearchMethod === 'text').length;
+    console.log({ 
+      "IMDB search results": imdbResults, 
+      "Text search results": textResults 
+    });
+
+    // Deduplicate NZB results (more effective with IMDB searches)
     try {
       const deduplicated = UTILS.deduplicateNZBResults(result);
       if (deduplicated && Array.isArray(deduplicated)) {
@@ -138,7 +148,7 @@ app
 
     console.log({ "Before sort": stream_results.length });
 
-    // ✅ NEW: Sort streams by quality, size, age
+    // ✅ Sort streams by quality, size, HDR, source, age
     stream_results = UTILS.sortStreams(stream_results);
 
     console.log({ "After sort": stream_results.length });
