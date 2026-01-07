@@ -79,78 +79,234 @@ let containsAbsoluteE_ = (name = "", s, e, abs, abs_season, abs_episode) =>
   name?.includes(` 0${abs_episode}.`) ||
   name?.includes(` ${abs_episode?.padStart(4, "0")}.`);
 
-const fetchNZBGeek = async (query, type = "series") => {
+// ============================================================================
+// ENHANCED NZB FETCH FUNCTIONS WITH IMDB ID SUPPORT
+// ============================================================================
+
+/**
+ * Generic NZB fetch with IMDB ID support
+ * @param {string} indexerName - Name for logging
+ * @param {string} apiUrl - Base API URL
+ * @param {string} apiKey - API key
+ * @param {string} query - Search query (fallback)
+ * @param {string} type - 'movie' or 'series'
+ * @param {string} imdbId - IMDB ID (tt1234567)
+ * @param {string} season - Season number
+ * @param {string} episode - Episode number
+ */
+const fetchNZBGeneric = async (indexerName, apiUrl, apiKey, query, type = "series", imdbId = null, season = null, episode = null) => {
   await new Promise((r) =>
     setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
   );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://api.nzbgeek.info/api?apikey=VHzV1yQlIOPYDuwE5uQZCp5W0giNM957&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
 
   const controller = new AbortController();
   const TIMEOUT = +process.env.TIMEOUT ?? 15000;
   const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
 
+  let api;
+  let searchMethod;
+
+  // STRATEGY 1: Try IMDB ID search first (most accurate)
+  if (imdbId && type === "movie") {
+    // Movie endpoint with IMDB ID
+    api = `${apiUrl}?apikey=${apiKey}&t=movie&imdbid=${imdbId}&cat=2000&extended=1&o=json`;
+    searchMethod = "imdb-movie";
+    console.log(`[${indexerName}] 🎯 IMDB Movie Search: ${imdbId}`);
+  } else if (imdbId && type === "series" && season && episode) {
+    // TV endpoint with IMDB ID + season/episode
+    api = `${apiUrl}?apikey=${apiKey}&t=tvsearch&imdbid=${imdbId}&season=${season}&ep=${episode}&cat=5000&extended=1&o=json`;
+    searchMethod = "imdb-tv";
+    console.log(`[${indexerName}] 🎯 IMDB TV Search: ${imdbId} S${season}E${episode}`);
+  } else {
+    // STRATEGY 2: Fallback to text search
+    query = decodeURIComponent(query);
+    api = `${apiUrl}?apikey=${apiKey}&t=search&o=json&q=${query}&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
+    searchMethod = "text";
+    console.log(`[${indexerName}] 📝 Text Search: ${query}`);
+  }
+
   let headersList = {
     Accept: "*/*",
     "Content-Type": "application/json",
+    "User-Agent": "Stremio/1.0",
   };
 
   try {
     return await fetch(api, {
       method: "GET",
       headers: headersList,
+      signal: controller.signal,
     })
       .then((res) => res.json())
       .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
+        // Handle different response formats
+        let items = [];
+        
+        // Newznab standard format
+        if (results?.channel?.item) {
+          items = Array.isArray(results.channel.item) ? results.channel.item : [results.channel.item];
+        }
+        // DrunkenSlug format
+        else if (results?.item) {
+          items = Array.isArray(results.item) ? results.item : [results.item];
+        }
 
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "nzbgeek",
-                  id: result["id"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
+        if (items.length === 0) {
+          console.log(`[${indexerName}] No results from ${searchMethod} search`);
           clearTimeout(timeoutId);
           return [];
         }
+
+        console.log(`[${indexerName}] ✅ ${items.length} results from ${searchMethod} search`);
+
+        const torrent_results = await Promise.all(
+          items.map((result) => {
+            return new Promise((resolve) => {
+              resolve({
+                Tracker: indexerName,
+                SearchMethod: searchMethod, // Track which method worked
+                id: result["id"] || result["guid"],
+                Size: result["enclosure"]?.["@attributes"]?.["length"] || 
+                      result["enclosure"]?.["_length"] || 
+                      result["size"] || 
+                      0,
+                Category: type,
+                Title: result["title"],
+                Desc: result["description"] || result["title"],
+                Date: result["pubDate"],
+                Link: result["link"],
+                MagnetUri: result["link"],
+              });
+            });
+          })
+        );
+
+        clearTimeout(timeoutId);
+        return torrent_results;
       })
       .catch((err) => {
+        console.error(`[${indexerName}] Error:`, err.message);
         clearTimeout(timeoutId);
         return [];
       });
   } catch (error) {
+    console.error(`[${indexerName}] Exception:`, error.message);
     clearTimeout(timeoutId);
     return [];
   }
 };
+
+// ============================================================================
+// SPECIFIC INDEXER FUNCTIONS (updated to use generic function)
+// ============================================================================
+
+const fetchNZBGeek = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "nzbgeek",
+    "https://api.nzbgeek.info/api",
+    "VHzV1yQlIOPYDuwE5uQZCp5W0giNM957",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchNZBSu = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "nzb.su",
+    "https://api.nzb.su/api",
+    "a245337a333d4d5019a336f9fa1c6ccb",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchNZBaltHUB = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "altHUB",
+    "https://api.althub.co.za/api",
+    "52a2eff3cf80777e7b1f202cb4d15822",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchNZBNinjaCentral = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "NinjaCentral",
+    "https://ninjacentral.co.za/api",
+    "e02419ea32dafd314f93ff1895f44087",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchNZBDrunkenSlug = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "Drunken Slug",
+    "https://api.drunkenslug.com/api",
+    "b02389cee5fabdf95db889db6a75846e",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchNZBFinder = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "Finder",
+    "https://nzbfinder.ws/api",
+    "d8bc97a73d696cb084966e3c4f9b42f4",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchUsenetCrawler = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "UsenetCrawler",
+    "https://www.usenet-crawler.com/api",
+    "c7ab91538e72ba267f161b55121c8f74",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+const fetchNZBPlanet = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  return fetchNZBGeneric(
+    "Planet",
+    "https://nzbplanet.net/api",
+    "d99cbff7fb412b52a2b815ecf7dfbe4c",
+    query,
+    type,
+    imdbId,
+    season,
+    episode
+  );
+};
+
+// ============================================================================
+// ANIME INDEXER (keep original version as it's different)
+// ============================================================================
 
 const fetchToshoNZB = async (query, type = "series") => {
   await new Promise((r) =>
@@ -225,539 +381,49 @@ const fetchToshoNZB = async (query, type = "series") => {
   }
 };
 
-const fetchNZBSu = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
+// ============================================================================
+// ENHANCED fetchAllNZB - Now with IMDB support
+// ============================================================================
 
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://api.nzb.su/api?apikey=a245337a333d4d5019a336f9fa1c6ccb&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "nzb.su",
-                  id: result["id"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchNZBaltHUB = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://api.althub.co.za/api?apikey=52a2eff3cf80777e7b1f202cb4d15822&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "altHUB",
-                  id: result["id"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchNZBNinjaCentral = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://ninjacentral.co.za/api?apikey=e02419ea32dafd314f93ff1895f44087&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "NinjaCentral",
-                  id: result["id"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchNZBDrunkenSlug = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://api.drunkenslug.com/api?apikey=b02389cee5fabdf95db889db6a75846e&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results && "item" in results && Array.isArray(results["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["item"]?.length });
-        if (results["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "Drunken Slug",
-                  id: result["id"],
-                  Size: result["enclosure"]["_length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        console.log(err);
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchNZBFinder = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://nzbfinder.ws/api?apikey=d8bc97a73d696cb084966e3c4f9b42f4&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "Finder",
-                  id: result["title"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        console.log(err);
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchUsenetCrawler = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://www.usenet-crawler.com/api?apikey=c7ab91538e72ba267f161b55121c8f74&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "UsenetCrawler",
-                  id: result["guid"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        console.log(err);
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchNZBPlanet = async (query, type = "series") => {
-  await new Promise((r) =>
-    setTimeout(r, Math.floor(Math.random() * 1000 + 1000))
-  );
-
-  query = decodeURIComponent(query);
-
-  const api =
-    "https://nzbplanet.net/api?apikey=d99cbff7fb412b52a2b815ecf7dfbe4c&t=search&o=json&q=" +
-    query +
-    `&cat=${type == "movie" ? "2000" : "5000"}&max=100`;
-
-  const controller = new AbortController();
-  const TIMEOUT = +process.env.TIMEOUT ?? 15000;
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-
-  let headersList = {
-    Accept: "*/*",
-    "Content-Type": "application/json",
-  };
-
-  try {
-    return await fetch(api, {
-      method: "GET",
-      headers: headersList,
-    })
-      .then((res) => res.json())
-      .then(async (results) => {
-        const isValidNzbResponse =
-          !!results &&
-          "channel" in results &&
-          !!results["channel"] &&
-          "item" in results["channel"] &&
-          Array.isArray(results["channel"]["item"]);
-
-        if (!isValidNzbResponse) return [];
-
-        console.log({ Initial: results["channel"]["item"]?.length });
-        if (results["channel"]["item"].length != 0) {
-          const torrent_results = await Promise.all(
-            results["channel"]["item"].map((result) => {
-              return new Promise((resolve, reject) => {
-                resolve({
-                  Tracker: "Planet",
-                  id: result["guid"],
-                  Size: result["enclosure"]["@attributes"]["length"],
-                  Category: type,
-                  Title: result["title"],
-                  Desc: result["description"],
-                  Date: result["pubDate"],
-                  Link: result["link"],
-                  MagnetUri: result["link"],
-                });
-              });
-            })
-          );
-          clearTimeout(timeoutId);
-          return torrent_results;
-        } else {
-          clearTimeout(timeoutId);
-          return [];
-        }
-      })
-      .catch((err) => {
-        console.log(err);
-        clearTimeout(timeoutId);
-        return [];
-      });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    return [];
-  }
-};
-
-const fetchAllNZB = async (query, type = "series") => {
+const fetchAllNZB = async (query, type = "series", imdbId = null, season = null, episode = null) => {
+  console.log(`\n=== Fetching from all indexers ===`);
+  console.log(`Type: ${type}`);
+  console.log(`IMDB ID: ${imdbId || 'None (using text search)'}`);
+  console.log(`Query: ${query}`);
+  if (season && episode) console.log(`Season: ${season}, Episode: ${episode}`);
+  
   try {
     const indexers = [];
     
-    // Only call enabled indexers
-    if (ENABLED_INDEXERS.nzbgeek) indexers.push(fetchNZBGeek(query, type));
-    if (ENABLED_INDEXERS.usenetcrawler) indexers.push(fetchUsenetCrawler(query, type));
-    if (ENABLED_INDEXERS.althub) indexers.push(fetchNZBaltHUB(query, type));
-    if (ENABLED_INDEXERS.finder) indexers.push(fetchNZBFinder(query, type));
-    if (ENABLED_INDEXERS.drunkenslug) indexers.push(fetchNZBDrunkenSlug(query, type));
-    if (ENABLED_INDEXERS.planet) indexers.push(fetchNZBPlanet(query, type));
-    if (ENABLED_INDEXERS.ninjacentral) indexers.push(fetchNZBNinjaCentral(query, type));
-    if (ENABLED_INDEXERS.nzbsu) indexers.push(fetchNZBSu(query, type));
-    if (ENABLED_INDEXERS.tosho) indexers.push(fetchToshoNZB(query, type));
+    // Only call enabled indexers, passing IMDB parameters
+    if (ENABLED_INDEXERS.nzbgeek) indexers.push(fetchNZBGeek(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.usenetcrawler) indexers.push(fetchUsenetCrawler(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.althub) indexers.push(fetchNZBaltHUB(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.finder) indexers.push(fetchNZBFinder(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.drunkenslug) indexers.push(fetchNZBDrunkenSlug(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.planet) indexers.push(fetchNZBPlanet(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.ninjacentral) indexers.push(fetchNZBNinjaCentral(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.nzbsu) indexers.push(fetchNZBSu(query, type, imdbId, season, episode));
+    if (ENABLED_INDEXERS.tosho) indexers.push(fetchToshoNZB(query, type)); // Anime indexer - keep text search
     
     const enabledCount = Object.values(ENABLED_INDEXERS).filter(Boolean).length;
     console.log(`Querying ${enabledCount} enabled indexers...`);
     
     const results = await Promise.all(indexers);
-    return results.flat();
+    const allResults = results.flat();
+    
+    // Log search method statistics
+    const imdbResults = allResults.filter(r => r?.SearchMethod?.includes('imdb')).length;
+    const textResults = allResults.filter(r => r?.SearchMethod === 'text').length;
+    
+    console.log(`\n📊 Search Results Summary:`);
+    console.log(`   IMDB searches: ${imdbResults} results`);
+    console.log(`   Text searches: ${textResults} results`);
+    console.log(`   Total: ${allResults.length} results\n`);
+
+    return allResults;
   } catch (error) {
-    console.error("fetchAllNZB error:", error);
+    console.error('fetchAllNZB error:', error);
     return [];
   }
 };
@@ -1259,6 +925,7 @@ module.exports = {
   bringFrenchVideoToTheTopOfList,
   getFlagFromName,
   getFittedFile,
+  fetchNZBGeneric,
   fetchNZBGeek,
   fetchNZBSu,
   fetchAllNZB,
